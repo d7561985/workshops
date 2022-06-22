@@ -25,7 +25,7 @@ to view the traces. A tutorial / walkthrough is available:
 
 * Download folder `demo` from https://github.com/d7561985/tel/tree/master/example
 * Run Tel infrastructure backend (OTEL Collector, Grafana, Grafana Loki, Grafana Tempo and Prometheus) and HotROD demo with `docker-compose -f path-to-yml-file up`
-* Access Grafana UI at http://localhost:3000 and HotROD app at http://localhost:8080
+* Access Grafana UI at http://localhost:3000
 * Shutdown / cleanup with `docker-compose -f path-to-yml-file down`
 
 Alternatively, you can run each component separately as described below.
@@ -35,3 +35,5 @@ Alternatively, you can run each component separately as described below.
 ```bash
 go run ./main.go all
 ```
+
+* Access HotROD app at http://localhost:8080

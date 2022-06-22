@@ -9,10 +9,25 @@ https://github.com/d7561985/workshops
 
 * Agenda
 
-- Documentation
-- Modules
-- GitOps Helm
-- Example
-- CRMv2 RUN UP
+- Tracing
+- Grafana + Tempo
+
+* Tracing
+
+.link https://grafana.com/oss/tempo/ Grafana Tempo
+.image img/how-does-tempo-work.png
+
+* Tracing
+Distributed tracing platform. It can be used for monitoring microservices-based distributed systems:
+
+- Distributed context propagation
+- Distributed transaction monitoring
+- Root cause analysis
+- Service dependency analysis
+- Performance / latency optimization
+
+* Tempo in Grafana
+.link https://grafana.com/docs/tempo/latest/getting-started/tempo-in-grafana/ link
+.image img/grafana-query.png 500 1000
 
 * Q/A

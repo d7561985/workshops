@@ -16,5 +16,5 @@ go install golang.org/x/tools/cmd/present@latest
 
 run it 
 ```bash
- present -base . -play -content ./go_tracing_1.slide
+ present -base . -play -content .
 ```
