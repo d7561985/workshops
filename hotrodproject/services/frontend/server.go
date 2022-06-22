@@ -21,13 +21,12 @@ import (
 	"net/http"
 	"path"
 
-	"github.com/opentracing/opentracing-go"
+	"github.com/d7561985/tel/v2"
 	"go.uber.org/zap"
 
 	"hotrod/pkg/httperr"
-	"hotrod/pkg/log"
-	"hotrod/pkg/tracing"
 
+	mw "github.com/d7561985/tel/v2/middleware/http"
 	"github.com/jaegertracing/jaeger/pkg/httpfs"
 )
 
@@ -37,12 +36,11 @@ var assetFS embed.FS
 // Server implements jaeger-demo-frontend service
 type Server struct {
 	hostPort string
-	tracer   opentracing.Tracer
-	logger   log.Factory
 	bestETA  *bestETA
 	assetFS  http.FileSystem
 	basepath string
 	jaegerUI string
+	tel      *tel.Telemetry
 }
 
 // ConfigOptions used to make sure service clients
@@ -57,12 +55,11 @@ type ConfigOptions struct {
 }
 
 // NewServer creates a new frontend.Server
-func NewServer(options ConfigOptions, tracer opentracing.Tracer, logger log.Factory) *Server {
+func NewServer(options ConfigOptions, tele tel.Telemetry) *Server {
 	return &Server{
 		hostPort: options.FrontendHostPort,
-		tracer:   tracer,
-		logger:   logger,
-		bestETA:  newBestETA(tracer, logger, options),
+		tel:      &tele,
+		bestETA:  newBestETA(tele, options),
 		assetFS:  httpfs.PrefixedFS("web_assets", http.FS(assetFS)),
 		basepath: options.Basepath,
 		jaegerUI: options.JaegerUI,
@@ -72,12 +69,12 @@ func NewServer(options ConfigOptions, tracer opentracing.Tracer, logger log.Fact
 // Run starts the frontend server
 func (s *Server) Run() error {
 	mux := s.createServeMux()
-	s.logger.Bg().Info("Starting", zap.String("address", "http://"+path.Join(s.hostPort, s.basepath)))
+	s.tel.Info("Starting", zap.String("address", "http://"+path.Join(s.hostPort, s.basepath)))
 	return http.ListenAndServe(s.hostPort, mux)
 }
 
 func (s *Server) createServeMux() http.Handler {
-	mux := tracing.NewServeMux(s.tracer)
+	mux := mw.NewServeMux(mw.WithTel(s.tel))
 	p := path.Join("/", s.basepath)
 	mux.Handle(p, http.StripPrefix(p, http.FileServer(s.assetFS)))
 	mux.Handle(path.Join(p, "/dispatch"), http.HandlerFunc(s.dispatch))
@@ -94,9 +91,10 @@ func (s *Server) config(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	s.logger.For(ctx).Info("HTTP request received", zap.String("method", r.Method), zap.Stringer("url", r.URL))
+	tel.FromCtx(ctx).Info("HTTP request received", zap.String("method", r.Method), zap.Stringer("url", r.URL))
 	if err := r.ParseForm(); httperr.HandleError(w, err, http.StatusBadRequest) {
-		s.logger.For(ctx).Error("bad request", zap.Error(err))
+		http.Error(w, "bad request", http.StatusBadRequest)
+		//s.logger.For(ctx).Error("bad request", zap.Error(err))
 		return
 	}
 
@@ -109,7 +107,7 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 	// TODO distinguish between user errors (such as invalid customer ID) and server failures
 	response, err := s.bestETA.Get(ctx, customerID)
 	if httperr.HandleError(w, err, http.StatusInternalServerError) {
-		s.logger.For(ctx).Error("request failed", zap.Error(err))
+		tel.FromCtx(ctx).Error("request failed", zap.Error(err))
 		return
 	}
 
@@ -119,7 +117,7 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
 func (s *Server) writeResponse(response interface{}, w http.ResponseWriter, r *http.Request) {
 	data, err := json.Marshal(response)
 	if httperr.HandleError(w, err, http.StatusInternalServerError) {
-		s.logger.For(r.Context()).Error("cannot marshal response", zap.Error(err))
+		tel.FromCtx(r.Context()).Error("cannot marshal response", zap.Error(err))
 		return
 	}
 

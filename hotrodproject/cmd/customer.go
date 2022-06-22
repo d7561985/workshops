@@ -16,15 +16,14 @@
 package cmd
 
 import (
+	"context"
 	"net"
 	"strconv"
 
-	"github.com/spf13/cobra"
-	"go.uber.org/zap"
-
-	"hotrod/pkg/log"
-	"hotrod/pkg/tracing"
 	"hotrod/services/customer"
+
+	"github.com/d7561985/tel/v2"
+	"github.com/spf13/cobra"
 )
 
 // customerCmd represents the customer command
@@ -33,15 +32,17 @@ var customerCmd = &cobra.Command{
 	Short: "Starts Customer service",
 	Long:  `Starts Customer service.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		zapLogger := logger.With(zap.String("service", "customer"))
-		logger := log.NewFactory(zapLogger)
+		cfg := tel.DefaultDebugConfig()
+		cfg.Service = "customer"
+
+		tele, closer := tel.New(context.Background(), cfg)
+		defer closer()
+
 		server := customer.NewServer(
 			net.JoinHostPort("0.0.0.0", strconv.Itoa(customerPort)),
-			tracing.Init("customer", metricsFactory, logger),
-			metricsFactory,
-			logger,
+			tele,
 		)
-		return logError(zapLogger, server.Run())
+		return logError(tele.Logger, server.Run())
 	},
 }
 

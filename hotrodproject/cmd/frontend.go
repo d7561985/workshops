@@ -16,15 +16,14 @@
 package cmd
 
 import (
+	"context"
 	"net"
 	"strconv"
 
-	"github.com/spf13/cobra"
-	"go.uber.org/zap"
-
-	"hotrod/pkg/log"
-	"hotrod/pkg/tracing"
 	"hotrod/services/frontend"
+
+	"github.com/d7561985/tel/v2"
+	"github.com/spf13/cobra"
 )
 
 // frontendCmd represents the frontend command
@@ -41,14 +40,17 @@ var frontendCmd = &cobra.Command{
 		options.Basepath = basepath
 		options.JaegerUI = jaegerUI
 
-		zapLogger := logger.With(zap.String("service", "frontend"))
-		logger := log.NewFactory(zapLogger)
+		cfg := tel.DefaultDebugConfig()
+		cfg.Service = "frontend"
+
+		tele, closer := tel.New(context.Background(), cfg)
+		defer closer()
+
 		server := frontend.NewServer(
 			options,
-			tracing.Init("frontend", metricsFactory, logger),
-			logger,
+			tele,
 		)
-		return logError(zapLogger, server.Run())
+		return logError(tele.Logger, server.Run())
 	},
 }
 

@@ -19,28 +19,26 @@ import (
 	"context"
 	"errors"
 
-	"github.com/opentracing/opentracing-go"
-	tags "github.com/opentracing/opentracing-go/ext"
+	"github.com/d7561985/tel/v2"
+	semconv "go.opentelemetry.io/otel/semconv/v1.10.0"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 
 	"hotrod/pkg/delay"
-	"hotrod/pkg/log"
 	"hotrod/pkg/tracing"
 	"hotrod/services/config"
 )
 
 // database simulates Customer repository implemented on top of an SQL database
 type database struct {
-	tracer    opentracing.Tracer
-	logger    log.Factory
+	tel       *tel.Telemetry
 	customers map[string]*Customer
 	lock      *tracing.Mutex
 }
 
-func newDatabase(tracer opentracing.Tracer, logger log.Factory) *database {
+func newDatabase(tele tel.Telemetry) *database {
 	return &database{
-		tracer: tracer,
-		logger: logger,
+		tel: &tele,
 		lock: &tracing.Mutex{
 			SessionBaggageKey: "request",
 		},
@@ -69,19 +67,15 @@ func newDatabase(tracer opentracing.Tracer, logger log.Factory) *database {
 	}
 }
 
-func (d *database) Get(ctx context.Context, customerID string) (*Customer, error) {
-	d.logger.For(ctx).Info("Loading customer", zap.String("customer_id", customerID))
+func (d *database) Get(ccx context.Context, customerID string) (*Customer, error) {
+	d.tel.Info("Loading customer", zap.String("customer_id", customerID))
 
-	// simulate opentracing instrumentation of an SQL query
-	if span := opentracing.SpanFromContext(ctx); span != nil {
-		span := d.tracer.StartSpan("SQL SELECT", opentracing.ChildOf(span.Context()))
-		tags.SpanKindRPCClient.Set(span)
-		tags.PeerService.Set(span, "mysql")
-		// #nosec
-		span.SetTag("sql.query", "SELECT * FROM customer WHERE customer_id="+customerID)
-		defer span.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span)
-	}
+	span, ctx := d.tel.StartSpan(ccx, "SQL SELECT",
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(semconv.PeerServiceKey.String("mysql")))
+	defer span.End()
+
+	tel.FromCtx(ctx).PutFields(tel.String("sql.query", "SELECT * FROM customer WHERE customer_id="+customerID))
 
 	if !config.MySQLMutexDisabled {
 		// simulate misconfigured connection pool that only gives one connection at a time
@@ -95,5 +89,6 @@ func (d *database) Get(ctx context.Context, customerID string) (*Customer, error
 	if customer, ok := d.customers[customerID]; ok {
 		return customer, nil
 	}
+
 	return nil, errors.New("invalid customer ID")
 }

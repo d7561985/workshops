@@ -24,42 +24,41 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
+	"github.com/d7561985/tel/v2"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 
 	"hotrod/pkg/delay"
 	"hotrod/pkg/httperr"
-	"hotrod/pkg/log"
-	"hotrod/pkg/tracing"
 	"hotrod/services/config"
+
+	mw "github.com/d7561985/tel/v2/middleware/http"
 )
 
 // Server implements Route service
 type Server struct {
 	hostPort string
-	tracer   opentracing.Tracer
-	logger   log.Factory
+	tel      *tel.Telemetry
 }
 
 // NewServer creates a new route.Server
-func NewServer(hostPort string, tracer opentracing.Tracer, logger log.Factory) *Server {
+func NewServer(hostPort string, tele tel.Telemetry) *Server {
 	return &Server{
 		hostPort: hostPort,
-		tracer:   tracer,
-		logger:   logger,
+		tel:      &tele,
 	}
 }
 
 // Run starts the Route server
 func (s *Server) Run() error {
 	mux := s.createServeMux()
-	s.logger.Bg().Info("Starting", zap.String("address", "http://"+s.hostPort))
+	s.tel.Info("Starting", zap.String("address", "http://"+s.hostPort))
+
 	return http.ListenAndServe(s.hostPort, mux)
 }
 
 func (s *Server) createServeMux() http.Handler {
-	mux := tracing.NewServeMux(s.tracer)
+	mux := mw.NewServeMux(mw.WithTel(s.tel))
 	mux.Handle("/route", http.HandlerFunc(s.route))
 	mux.Handle("/debug/vars", expvar.Handler()) // expvar
 	mux.Handle("/metrics", promhttp.Handler())  // Prometheus
@@ -68,9 +67,9 @@ func (s *Server) createServeMux() http.Handler {
 
 func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	s.logger.For(ctx).Info("HTTP request received", zap.String("method", r.Method), zap.Stringer("url", r.URL))
+	tel.FromCtx(ctx).Info("HTTP request received", zap.String("method", r.Method), zap.Stringer("url", r.URL))
 	if err := r.ParseForm(); httperr.HandleError(w, err, http.StatusBadRequest) {
-		s.logger.For(ctx).Error("bad request", zap.Error(err))
+		tel.FromCtx(ctx).Error("bad request", zap.Error(err))
 		return
 	}
 
@@ -90,7 +89,7 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 
 	data, err := json.Marshal(response)
 	if httperr.HandleError(w, err, http.StatusInternalServerError) {
-		s.logger.For(ctx).Error("cannot marshal response", zap.Error(err))
+		tel.FromCtx(ctx).Error("cannot marshal response", zap.Error(err))
 		return
 	}
 

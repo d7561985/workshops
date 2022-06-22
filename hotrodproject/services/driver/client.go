@@ -19,44 +19,42 @@ import (
 	"context"
 	"time"
 
-	otgrpc "github.com/opentracing-contrib/go-grpc"
-	"github.com/opentracing/opentracing-go"
+	mw "github.com/d7561985/tel/middleware/grpc/v2"
+	"github.com/d7561985/tel/v2"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-
-	"hotrod/pkg/log"
 )
 
 // Client is a remote client that implements driver.Interface
 type Client struct {
-	tracer opentracing.Tracer
-	logger log.Factory
+	tel    *tel.Telemetry
 	client DriverServiceClient
 }
 
 // NewClient creates a new driver.Client
-func NewClient(tracer opentracing.Tracer, logger log.Factory, hostPort string) *Client {
+func NewClient(tele tel.Telemetry, hostPort string) *Client {
+	tele.PutFields(tel.String("component", "driver_client"))
+
 	conn, err := grpc.Dial(hostPort, grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithUnaryInterceptor(
-			otgrpc.OpenTracingClientInterceptor(tracer)),
-		grpc.WithStreamInterceptor(
-			otgrpc.OpenTracingStreamClientInterceptor(tracer)))
+		grpc.WithUnaryInterceptor(mw.UnaryClientInterceptorAll(mw.WithTel(&tele))),
+		grpc.WithStreamInterceptor(mw.StreamClientInterceptor()),
+	)
 	if err != nil {
-		logger.Bg().Fatal("Cannot create gRPC connection", zap.Error(err))
+		tele.Fatal("Cannot create gRPC connection", zap.Error(err))
 	}
 
 	client := NewDriverServiceClient(conn)
 	return &Client{
-		tracer: tracer,
-		logger: logger,
+		tel:    &tele,
 		client: client,
 	}
 }
 
 // FindNearest implements driver.Interface#FindNearest as an RPC
 func (c *Client) FindNearest(ctx context.Context, location string) ([]Driver, error) {
-	c.logger.For(ctx).Info("Finding nearest drivers", zap.String("location", location))
+	tel.FromCtx(ctx).Info("Finding nearest drivers", zap.String("location", location))
+
 	ctx, cancel := context.WithTimeout(ctx, 1*time.Second)
 	defer cancel()
 	response, err := c.client.FindNearest(ctx, &DriverLocationRequest{Location: location})

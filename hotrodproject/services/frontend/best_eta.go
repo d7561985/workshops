@@ -22,10 +22,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/d7561985/tel/v2"
 	"github.com/opentracing/opentracing-go"
 	"go.uber.org/zap"
 
-	"hotrod/pkg/log"
 	"hotrod/pkg/pool"
 	"hotrod/services/config"
 	"hotrod/services/customer"
@@ -38,7 +38,7 @@ type bestETA struct {
 	driver   driver.Interface
 	route    route.Interface
 	pool     *pool.Pool
-	logger   log.Factory
+	tel      *tel.Telemetry
 }
 
 // Response contains ETA for a trip.
@@ -47,25 +47,22 @@ type Response struct {
 	ETA    time.Duration
 }
 
-func newBestETA(tracer opentracing.Tracer, logger log.Factory, options ConfigOptions) *bestETA {
+func newBestETA(tele tel.Telemetry, options ConfigOptions) *bestETA {
 	return &bestETA{
 		customer: customer.NewClient(
-			tracer,
-			logger.With(zap.String("component", "customer_client")),
+			tele,
 			options.CustomerHostPort,
 		),
 		driver: driver.NewClient(
-			tracer,
-			logger.With(zap.String("component", "driver_client")),
+			tele,
 			options.DriverHostPort,
 		),
 		route: route.NewClient(
-			tracer,
-			logger.With(zap.String("component", "route_client")),
+			tele,
 			options.RouteHostPort,
 		),
-		pool:   pool.New(config.RouteWorkerPoolSize),
-		logger: logger,
+		pool: pool.New(config.RouteWorkerPoolSize),
+		tel:  &tele,
 	}
 }
 
@@ -74,7 +71,7 @@ func (eta *bestETA) Get(ctx context.Context, customerID string) (*Response, erro
 	if err != nil {
 		return nil, err
 	}
-	eta.logger.For(ctx).Info("Found customer", zap.Any("customer", customer))
+	tel.FromCtx(ctx).Info("Found customer", zap.Any("customer", customer))
 
 	if span := opentracing.SpanFromContext(ctx); span != nil {
 		span.SetBaggageItem("customer", customer.Name)
@@ -84,10 +81,10 @@ func (eta *bestETA) Get(ctx context.Context, customerID string) (*Response, erro
 	if err != nil {
 		return nil, err
 	}
-	eta.logger.For(ctx).Info("Found drivers", zap.Any("drivers", drivers))
+	tel.FromCtx(ctx).Info("Found drivers", zap.Any("drivers", drivers))
 
 	results := eta.getRoutes(ctx, customer, drivers)
-	eta.logger.For(ctx).Info("Found routes", zap.Any("routes", results))
+	tel.FromCtx(ctx).Info("Found routes", zap.Any("routes", results))
 
 	resp := &Response{ETA: math.MaxInt64}
 	for _, result := range results {
@@ -103,7 +100,7 @@ func (eta *bestETA) Get(ctx context.Context, customerID string) (*Response, erro
 		return nil, errors.New("no routes found")
 	}
 
-	eta.logger.For(ctx).Info("Dispatch successful", zap.String("driver", resp.Driver), zap.String("eta", resp.ETA.String()))
+	tel.FromCtx(ctx).Info("Dispatch successful", zap.String("driver", resp.Driver), zap.String("eta", resp.ETA.String()))
 	return resp, nil
 }
 

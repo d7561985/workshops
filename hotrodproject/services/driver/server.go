@@ -19,20 +19,16 @@ import (
 	"context"
 	"net"
 
-	otgrpc "github.com/opentracing-contrib/go-grpc"
-	"github.com/opentracing/opentracing-go"
-	"github.com/uber/jaeger-lib/metrics"
+	mw "github.com/d7561985/tel/middleware/grpc/v2"
+	"github.com/d7561985/tel/v2"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-
-	"hotrod/pkg/log"
 )
 
 // Server implements jaeger-demo-frontend service
 type Server struct {
 	hostPort string
-	tracer   opentracing.Tracer
-	logger   log.Factory
+	tel      *tel.Telemetry
 	redis    *Redis
 	server   *grpc.Server
 }
@@ -40,17 +36,18 @@ type Server struct {
 var _ DriverServiceServer = (*Server)(nil)
 
 // NewServer creates a new driver.Server
-func NewServer(hostPort string, tracer opentracing.Tracer, metricsFactory metrics.Factory, logger log.Factory) *Server {
-	server := grpc.NewServer(grpc.UnaryInterceptor(
-		otgrpc.OpenTracingServerInterceptor(tracer)),
-		grpc.StreamInterceptor(
-			otgrpc.OpenTracingStreamServerInterceptor(tracer)))
+func NewServer(hostPort string, tele tel.Telemetry) *Server {
+
+	server := grpc.NewServer(
+		grpc.UnaryInterceptor(mw.UnaryServerInterceptorAll(mw.WithTel(&tele))),
+		grpc.StreamInterceptor(mw.StreamServerInterceptor()),
+	)
+
 	return &Server{
 		hostPort: hostPort,
-		tracer:   tracer,
-		logger:   logger,
+		tel:      &tele,
 		server:   server,
-		redis:    newRedis(metricsFactory, logger),
+		redis:    newRedis(tele),
 	}
 }
 
@@ -58,19 +55,19 @@ func NewServer(hostPort string, tracer opentracing.Tracer, metricsFactory metric
 func (s *Server) Run() error {
 	lis, err := net.Listen("tcp", s.hostPort)
 	if err != nil {
-		s.logger.Bg().Fatal("Unable to create http listener", zap.Error(err))
+		s.tel.Fatal("Unable to create http listener", zap.Error(err))
 	}
 	RegisterDriverServiceServer(s.server, s)
 	err = s.server.Serve(lis)
 	if err != nil {
-		s.logger.Bg().Fatal("Unable to start gRPC server", zap.Error(err))
+		s.tel.Fatal("Unable to start gRPC server", zap.Error(err))
 	}
 	return err
 }
 
 // FindNearest implements gRPC driver interface
 func (s *Server) FindNearest(ctx context.Context, location *DriverLocationRequest) (*DriverLocationResponse, error) {
-	s.logger.For(ctx).Info("Searching for nearby drivers", zap.String("location", location.Location))
+	tel.FromCtx(ctx).Info("Searching for nearby drivers", zap.String("location", location.Location))
 	driverIDs := s.redis.FindDriverIDs(ctx, location.Location)
 
 	retMe := make([]*DriverLocation, len(driverIDs))
@@ -82,10 +79,10 @@ func (s *Server) FindNearest(ctx context.Context, location *DriverLocationReques
 			if err == nil {
 				break
 			}
-			s.logger.For(ctx).Error("Retrying GetDriver after error", zap.Int("retry_no", i+1), zap.Error(err))
+			tel.FromCtx(ctx).Error("Retrying GetDriver after error", zap.Int("retry_no", i+1), zap.Error(err))
 		}
 		if err != nil {
-			s.logger.For(ctx).Error("Failed to get driver after 3 attempts", zap.Error(err))
+			tel.FromCtx(ctx).Error("Failed to get driver after 3 attempts", zap.Error(err))
 			return nil, err
 		}
 		retMe[i] = &DriverLocation{
@@ -93,6 +90,6 @@ func (s *Server) FindNearest(ctx context.Context, location *DriverLocationReques
 			Location: drv.Location,
 		}
 	}
-	s.logger.For(ctx).Info("Search successful", zap.Int("num_drivers", len(retMe)))
+	tel.FromCtx(ctx).Info("Search successful", zap.Int("num_drivers", len(retMe)))
 	return &DriverLocationResponse{Locations: retMe}, nil
 }

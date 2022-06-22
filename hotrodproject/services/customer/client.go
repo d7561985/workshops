@@ -17,47 +17,56 @@ package customer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 
-	"github.com/opentracing-contrib/go-stdlib/nethttp"
-	"github.com/opentracing/opentracing-go"
+	"github.com/d7561985/tel/v2"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 
-	"hotrod/pkg/log"
-	"hotrod/pkg/tracing"
+	mw "github.com/d7561985/tel/v2/middleware/http"
 )
 
 // Client is a remote client that implements customer.Interface
 type Client struct {
-	tracer   opentracing.Tracer
-	logger   log.Factory
-	client   *tracing.HTTPClient
+	tel      *tel.Telemetry
+	client   *http.Client
 	hostPort string
 }
 
 // NewClient creates a new customer.Client
-func NewClient(tracer opentracing.Tracer, logger log.Factory, hostPort string) *Client {
+func NewClient(tele tel.Telemetry, hostPort string) *Client {
+	tele.PutFields(tel.String("component", "customer_client"))
+
 	return &Client{
-		tracer: tracer,
-		logger: logger,
-		client: &tracing.HTTPClient{
-			Client: &http.Client{Transport: &nethttp.Transport{}},
-			Tracer: tracer,
-		},
+		tel:      &tele,
+		client:   mw.UpdateClient(mw.NewClient(nil), mw.WithTel(&tele)),
 		hostPort: hostPort,
 	}
 }
 
 // Get implements customer.Interface#Get as an RPC
 func (c *Client) Get(ctx context.Context, customerID string) (*Customer, error) {
-	c.logger.For(ctx).Info("Getting customer", zap.String("customer_id", customerID))
+	tel.FromCtx(ctx).Info("Getting customer", zap.String("customer_id", customerID))
 
 	url := fmt.Sprintf("http://"+c.hostPort+"/customer?customer=%s", customerID)
-	fmt.Println(url)
-	var customer Customer
-	if err := c.client.GetJSON(ctx, "/customer", url, &customer); err != nil {
-		return nil, err
+
+	r, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, errors.WithStack(err)
 	}
-	return &customer, nil
+
+	do, err := c.client.Do(r)
+	if err != nil {
+		return nil, errors.WithStack(err)
+	}
+
+	defer do.Body.Close()
+
+	var customer Customer
+
+	err = json.NewDecoder(do.Body).Decode(&customer)
+
+	return &customer, errors.WithStack(err)
 }

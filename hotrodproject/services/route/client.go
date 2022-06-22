@@ -17,50 +17,76 @@ package route
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
 
-	"github.com/opentracing-contrib/go-stdlib/nethttp"
-	"github.com/opentracing/opentracing-go"
+	"github.com/d7561985/tel/v2"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 
-	"hotrod/pkg/log"
-	"hotrod/pkg/tracing"
+	mw "github.com/d7561985/tel/v2/middleware/http"
 )
 
 // Client is a remote client that implements route.Interface
 type Client struct {
-	tracer   opentracing.Tracer
-	logger   log.Factory
-	client   *tracing.HTTPClient
+	tel      *tel.Telemetry
+	client   *http.Client
 	hostPort string
 }
 
 // NewClient creates a new route.Client
-func NewClient(tracer opentracing.Tracer, logger log.Factory, hostPort string) *Client {
+func NewClient(tele tel.Telemetry, hostPort string) *Client {
+	tele.PutFields(tel.String("component", "route_client"))
+
 	return &Client{
-		tracer: tracer,
-		logger: logger,
-		client: &tracing.HTTPClient{
-			Client: &http.Client{Transport: &nethttp.Transport{}},
-			Tracer: tracer,
-		},
+		tel:      &tele,
+		client:   mw.UpdateClient(mw.NewClient(nil), mw.WithTel(&tele)),
 		hostPort: hostPort,
 	}
 }
 
 // FindRoute implements route.Interface#FindRoute as an RPC
 func (c *Client) FindRoute(ctx context.Context, pickup, dropoff string) (*Route, error) {
-	c.logger.For(ctx).Info("Finding route", zap.String("pickup", pickup), zap.String("dropoff", dropoff))
+	tel.FromCtx(ctx).Info("Finding route", zap.String("pickup", pickup), zap.String("dropoff", dropoff))
 
 	v := url.Values{}
 	v.Set("pickup", pickup)
 	v.Set("dropoff", dropoff)
 	url := "http://" + c.hostPort + "/route?" + v.Encode()
 	var route Route
-	if err := c.client.GetJSON(ctx, "/route", url, &route); err != nil {
-		c.logger.For(ctx).Error("Error getting route", zap.Error(err))
-		return nil, err
+	if err := c.GetJSON(ctx, "/route", url, &route); err != nil {
+		tel.FromCtx(ctx).Error("Error getting route", zap.Error(err))
+		return nil, errors.WithStack(err)
 	}
 	return &route, nil
+}
+
+// GetJSON executes HTTP GET against specified url and tried to parse
+// the response into out object.
+func (c *Client) GetJSON(ctx context.Context, endpoint string, url string, out interface{}) error {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
+	}
+	req = req.WithContext(ctx)
+
+	res, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+
+	defer res.Body.Close()
+
+	if res.StatusCode >= 400 {
+		body, err := io.ReadAll(res.Body)
+		if err != nil {
+			return err
+		}
+		return errors.New(string(body))
+	}
+
+	decoder := json.NewDecoder(res.Body)
+	return decoder.Decode(out)
 }
